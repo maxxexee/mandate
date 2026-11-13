@@ -1,28 +1,9 @@
 {
   "name": "mandate",
-  "logo": "https://solana.com/src/img/branding/solanaLogoMark.png",
-  "description": "A fresh Anchor program!",
-  "notification": "Remember to review and publish this metadata with `anchor program deploy --security-metadata` once the contents are accurate.",
-  "sdk": "https://github.com/your-sdk",
-  "project_url": "https://github.com/your-project/",
-  "contacts": [
-    "email:security@example.com",
-    "discord:MyProgram#1234",
-    "twitter:@MyProgram"
-  ],
-  "policy": "https://example.com/security-policy",
-  "preferred_languages": [
-    "en",
-    "de"
-  ],
-  "encryption": "https://example.com/pgp-key",
-  "source_code": "https://github.com/your-source-code/",
+  "description": "On-chain spend limits for an agent's payments",
+  "project_url": "https://github.com/maxxexee/mandate",
+  "source_code": "https://github.com/maxxexee/mandate",
   "source_release": "v0.1.0",
-  "source_revision": "abc123def456",
-  "auditors": [
-    "Audit Firm A",
-    "Security Researcher B"
-  ],
-  "acknowledgements": "https://example.com/security-acknowledgements",
+  "auditors": [],
   "version": "0.1.0"
 }

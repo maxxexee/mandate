@@ -9,6 +9,9 @@ skip-lint = false
 [programs.localnet]
 mandate = "9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN"
 
+[programs.devnet]
+mandate = "9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN"
+
 [provider]
 cluster = "localnet"
 wallet = "~/.config/solana/id.json"

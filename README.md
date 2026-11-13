@@ -37,10 +37,17 @@ Implemented and tested against LiteSVM:
   and moves tokens from the mandate vault
 - `revoke`: owner-signed, returns the vault remainder and closes the accounts
 
-It is deployed on devnet at `9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN`, and
-`clients/devnet` has been run against that deployment: one payment of 1,500,000
-units moved from the vault to the merchant, and a 3,000,000 unit payment was
-refused on chain with `CapExceeded`.
+It is deployed on devnet at `9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN`, under
+upgrade authority `TKAmDM9kyPicm7T72mQxWwB4Npf3RdJdw4BhvqFkvBV` (the key itself
+is not in this repo). Its IDL is published on chain, so
+`anchor idl fetch 9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN --provider.cluster devnet`
+returns the interface without the repo.
+
+`clients/devnet` has been run against that deployment, and all three
+instructions have executed there: a payment of 1,500,000 units moved from the
+vault to the merchant, a 3,000,000 unit payment was refused on chain with
+`CapExceeded`, and `revoke` returned the remaining 1,000,000 units to the owner
+and closed both the vault and the mandate account.
 
 There is no instruction to top up a vault; the owner funds and refunds it with
 a plain SPL transfer to the token account the mandate controls.
@@ -92,10 +99,14 @@ solana program dump -u m TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA spl_token.s
 
 The tests run against the `.so` in `target/deploy`, so they exercise the same
 artifact that gets deployed. If a deploy is rejected with `invalid file header`,
-the artifact is a stale legacy BPF build. Rebuild it and check that the ELF
-machine type is SBPF:
+`anchor build` wrote an artifact that the cluster's loader rejects. On this
+toolchain it builds into `target/sbpfv3-solana-solana`, whose output carries ELF
+machine `0x00f7`; the loader wants `0x0107`. Building with plain
+`cargo-build-sbf` produces the accepted one, so the deploy step always follows
+`anchor build` with it and checks the header:
 
 ```
+anchor build
 (cd programs/mandate && cargo-build-sbf --sbf-out-dir ../../target/deploy)
 xxd -s 18 -l 2 target/deploy/mandate.so   # expect 0701
 ```
@@ -105,16 +116,20 @@ xxd -s 18 -l 2 target/deploy/mandate.so   # expect 0701
 ```
 solana program deploy target/deploy/mandate.so \
   --program-id target/deploy/mandate-keypair.json \
+  --upgrade-authority <authority-keypair> \
   --url <cluster>
 ```
 
 The program keypair in `target/deploy` must stay with the repo's `declare_id`.
+The upgrade authority is the key that can replace this program, so it belongs in
+cold storage, not next to the deploy script.
 
 `clients/devnet` is a small binary that drives a cluster end to end: it creates
 a mint, funds a vault, creates a mandate for a fresh agent key, sends one
-payment inside the policy and one above the per-payment cap that the program
-must refuse, then reads the result back. It keeps its keys under
-`target/devnet/`, so a rerun spends from the same mandate.
+payment inside the policy, one above the per-payment cap that the program must
+refuse, then revokes and confirms the vault and mandate were closed. It keeps
+its keys under `target/devnet/`, so a rerun reuses them and starts from a fresh
+mandate.
 
 ```
 cd clients/devnet

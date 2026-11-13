@@ -73,9 +73,11 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mandate = ensure_mandate(&rpc, &keys)?;
     fund_vault(&rpc, &keys, &mandate)?;
 
+    let before = State::read(&rpc, &mandate, &keys)?;
+
     let signature = spend(&rpc, &keys, &mandate, PAYMENT)?;
     println!("\nspend {PAYMENT} allowed: {signature}");
-    println!("  https://explorer.solana.com/tx/{signature}?cluster=devnet");
+    println!("  {}", explorer(&signature, &url));
 
     let refusal = spend(&rpc, &keys, &mandate, OVER_CAP_PAYMENT)
         .map_err(|error| error.to_string())
@@ -86,8 +88,75 @@ fn main() -> Result<(), Box<dyn Error>> {
     );
     println!("spend {OVER_CAP_PAYMENT} refused on chain: CapExceeded");
 
-    report(&rpc, &keys, &mandate)?;
+    let after = State::read(&rpc, &mandate, &keys)?;
+    report(&before, &after);
+
+    let signature = revoke(&rpc, &keys, &mandate)?;
+    println!("\nrevoke: {signature}");
+    println!("  {}", explorer(&signature, &url));
+    verify_closed(&rpc, &keys, &mandate, after)?;
     Ok(())
+}
+
+/// On-chain state either side of the payment, so a rerun against an existing
+/// mandate is judged by the change it made rather than by absolute balances.
+struct State {
+    spent_in_period: u64,
+    vault: u64,
+    merchant: u64,
+}
+
+impl State {
+    fn read(rpc: &RpcClient, mandate: &Pubkey, keys: &Keys) -> Result<Self, Box<dyn Error>> {
+        let account = rpc.get_account(mandate)?;
+        let mut data: &[u8] = &account.data;
+        let state = Mandate::try_deserialize(&mut data)?;
+        Ok(Self {
+            spent_in_period: state.spent_in_period,
+            vault: token_amount(rpc, &keys.vault_account(mandate))?,
+            merchant: token_amount(rpc, &keys.merchant_account())?,
+        })
+    }
+}
+
+fn report(before: &State, after: &State) {
+    println!("\non chain");
+    println!("  mandate spent_in_period {}", after.spent_in_period);
+    println!("  vault                     {}", after.vault);
+    println!("  merchant                  {}", after.merchant);
+
+    assert_eq!(after.spent_in_period, before.spent_in_period + PAYMENT);
+    assert_eq!(after.vault, before.vault - PAYMENT);
+    assert_eq!(after.merchant, before.merchant + PAYMENT);
+}
+
+fn verify_closed(
+    rpc: &RpcClient,
+    keys: &Keys,
+    mandate: &Pubkey,
+    before: State,
+) -> Result<(), Box<dyn Error>> {
+    assert!(rpc.get_account(mandate).is_err(), "the mandate account must be closed");
+    assert!(
+        rpc.get_account(&keys.vault_account(mandate)).is_err(),
+        "the vault must be closed"
+    );
+    let owner = token_amount(rpc, &keys.owner_account())?;
+    println!("  mandate and vault closed, owner holds {owner}");
+    assert!(owner >= before.vault, "the vault remainder must reach the owner");
+    Ok(())
+}
+
+/// Explorer links carry the cluster only when the RPC URL names one.
+fn explorer(signature: &str, url: &str) -> String {
+    let cluster = if url.contains("devnet") {
+        "?cluster=devnet"
+    } else if url.contains("testnet") {
+        "?cluster=testnet"
+    } else {
+        ""
+    };
+    format!("https://explorer.solana.com/tx/{signature}{cluster}")
 }
 
 fn load_keys() -> Result<Keys, Box<dyn Error>> {
@@ -275,19 +344,21 @@ fn spend(
     send(rpc, &[ix], &[&keys.agent])
 }
 
-fn report(rpc: &RpcClient, keys: &Keys, mandate: &Pubkey) -> Result<(), Box<dyn Error>> {
-    let account = rpc.get_account(mandate)?;
-    let mut data: &[u8] = &account.data;
-    let state = Mandate::try_deserialize(&mut data)?;
-
-    println!("\non chain");
-    println!("  mandate spent_in_period {}", state.spent_in_period);
-    println!("  vault                     {}", token_amount(rpc, &keys.vault_account(mandate))?);
-    println!("  merchant                  {}", token_amount(rpc, &keys.merchant_account())?);
-
-    assert_eq!(state.spent_in_period, PAYMENT);
-    assert_eq!(token_amount(rpc, &keys.merchant_account())?, PAYMENT);
-    Ok(())
+fn revoke(rpc: &RpcClient, keys: &Keys, mandate: &Pubkey) -> Result<String, Box<dyn Error>> {
+    let ix = Instruction::new_with_bytes(
+        mandate::id(),
+        &mandate::instruction::Revoke {}.data(),
+        mandate::accounts::Revoke {
+            owner: keys.owner.pubkey(),
+            agent: keys.agent.pubkey(),
+            mandate: *mandate,
+            vault: keys.vault_account(mandate),
+            owner_token: keys.owner_account(),
+            token_program: token::ID,
+        }
+        .to_account_metas(None),
+    );
+    send(rpc, &[ix], &[&keys.owner])
 }
 
 impl Keys {
