@@ -37,9 +37,13 @@ Implemented and tested against LiteSVM:
   and moves tokens from the mandate vault
 - `revoke`: owner-signed, returns the vault remainder and closes the accounts
 
-Nothing here is deployed yet. There is no instruction to top up a vault; the
-owner funds and refunds it with a plain SPL transfer to the token account the
-mandate controls.
+It is deployed on devnet at `9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN`, and
+`clients/devnet` has been run against that deployment: one payment of 1,500,000
+units moved from the vault to the merchant, and a 3,000,000 unit payment was
+refused on chain with `CapExceeded`.
+
+There is no instruction to top up a vault; the owner funds and refunds it with
+a plain SPL transfer to the token account the mandate controls.
 
 ## Layout
 
