@@ -30,17 +30,16 @@ owned by the mandate PDA and `revoke` returns the remainder to the owner.
 
 ## Status
 
-Implemented and tested:
+Implemented and tested against LiteSVM:
 
 - `create_mandate`: validates the policy and writes the `Mandate` account
-
-Not implemented yet:
-
 - `spend`: agent-signed payment, enforces the caps, the allowlist and the expiry,
   and moves tokens from the mandate vault
 - `revoke`: owner-signed, returns the vault remainder and closes the accounts
 
-The README will say otherwise once those exist. Nothing here is deployed yet.
+Nothing here is deployed yet. There is no instruction to top up a vault; the
+owner funds and refunds it with a plain SPL transfer to the token account the
+mandate controls.
 
 ## Layout
 
@@ -51,7 +50,13 @@ programs/mandate/
   src/error.rs                   typed rejections
   src/constants.rs               PDA seed, allowlist bound
   src/instructions/create_mandate.rs
-  tests/create_mandate.rs        LiteSVM tests
+  src/instructions/spend.rs
+  src/instructions/revoke.rs
+  tests/support/mod.rs           shared LiteSVM fixture
+  tests/create_mandate.rs
+  tests/spend.rs
+  tests/revoke.rs
+  tests/fixtures/spl_token.so    token program loaded into the test VM
 ```
 
 The mandate PDA is derived from `["mandate", owner, agent]`, so one owner can
@@ -70,7 +75,16 @@ cargo test
 ```
 
 The tests run against the compiled `.so` in a LiteSVM instance, so they need
-`anchor build` to have produced `target/deploy/mandate.so` first.
+`anchor build` to have produced `target/deploy/mandate.so` first. `cargo test`
+currently runs 27 tests: 7 unit tests over the period accounting and 20
+integration tests that send real transactions.
+
+LiteSVM ships no SPL token program, so `tests/fixtures/spl_token.so` is loaded
+alongside the program. It was dumped from mainnet:
+
+```
+solana program dump -u m TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA spl_token.so
+```
 
 ## Known limitations
 
@@ -81,3 +95,10 @@ The tests run against the compiled `.so` in a LiteSVM instance, so they need
   does not read mint metadata.
 - There is no cap on the number of periods, so a long-lived mandate with a short
   period can record many resets. Each reset is a single field write.
+- `spend` accepts any token account whose mint matches and whose authority is the
+  mandate PDA, rather than one fixed vault address. An owner who creates several
+  such accounts can split the balance across them, but `revoke` only sweeps the
+  vault it is given and closes that one.
+- The recipient is checked through the token account's owner, so a payment to a
+  token account controlled by an allowlisted key is allowed even if the account
+  itself was not named.

@@ -27,4 +27,12 @@ pub mod mandate {
     ) -> Result<()> {
         instructions::create_mandate::handle_create_mandate(ctx, agent, policy)
     }
+
+    pub fn spend(ctx: Context<Spend>, amount: u64) -> Result<()> {
+        instructions::spend::handle_spend(ctx, amount)
+    }
+
+    pub fn revoke(ctx: Context<Revoke>) -> Result<()> {
+        instructions::revoke::handle_revoke(ctx)
+    }
 }
