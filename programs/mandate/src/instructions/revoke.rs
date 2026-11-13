@@ -20,13 +20,25 @@ pub struct Revoke<'info> {
         has_one = agent
     )]
     pub mandate: Account<'info, Mandate>,
-    #[account(mut, token::mint = mandate.mint, token::authority = mandate)]
+    #[account(
+        mut,
+        token::mint = mandate.mint,
+        token::authority = mandate,
+        // Pinning the vault to the canonical associated account stops the
+        // balance from being split across sibling accounts that `revoke`
+        // would never sweep.
+        address = anchor_spl::associated_token::get_associated_token_address(
+            &mandate.key(),
+            &mandate.mint,
+        ),
+    )]
     pub vault: Account<'info, TokenAccount>,
     #[account(mut, token::mint = mandate.mint, token::authority = owner)]
     pub owner_token: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
+/// Sweeps the vault back to the owner and closes both accounts.
 pub fn handle_revoke(ctx: Context<Revoke>) -> Result<()> {
     let remainder = ctx.accounts.vault.amount;
     let owner_key = ctx.accounts.mandate.owner;

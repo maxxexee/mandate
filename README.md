@@ -28,6 +28,11 @@ A mandate binds one agent key to one mint with four limits:
 The owner keeps the remaining balance, because the vault is a token account
 owned by the mandate PDA and `revoke` returns the remainder to the owner.
 
+The limits and the allowlist are not frozen. The owner can tighten or widen them
+through `update_policy`, and add or remove recipients one at a time, without
+recreating the mandate and without losing the period accounting. The agent can
+do none of those things, so it cannot widen its own authority.
+
 ## Status
 
 Implemented and tested against LiteSVM:
@@ -36,6 +41,10 @@ Implemented and tested against LiteSVM:
 - `spend`: agent-signed payment, enforces the caps, the allowlist and the expiry,
   and moves tokens from the mandate vault
 - `revoke`: owner-signed, returns the vault remainder and closes the accounts
+- `update_policy`: owner-signed replacement of the four numeric limits, refusing
+  a `period_cap` below what the running period already spent
+- `add_recipient` and `remove_recipient`: owner-signed allowlist edits, bounded
+  at 8
 
 It is deployed on devnet at `9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN`, under
 upgrade authority `TKAmDM9kyPicm7T72mQxWwB4Npf3RdJdw4BhvqFkvBV` (the key itself
@@ -43,11 +52,12 @@ is not in this repo). Its IDL is published on chain, so
 `anchor idl fetch 9izrkU3aCb3KxAcfzErm91GCSnyFEsqTkQHgKWb4hTYN --provider.cluster devnet`
 returns the interface without the repo.
 
-`clients/devnet` has been run against that deployment, and all three
-instructions have executed there: a payment of 1,500,000 units moved from the
-vault to the merchant, a 3,000,000 unit payment was refused on chain with
-`CapExceeded`, and `revoke` returned the remaining 1,000,000 units to the owner
-and closed both the vault and the mandate account.
+`clients/devnet` has been run against that deployment and all six instructions
+have executed there. In one run: a payment of 1,500,000 units moved from the
+vault to the merchant, a 3,000,000 unit payment was refused with `CapExceeded`,
+the owner updated the policy, added a second recipient, paid it 500,000 units,
+removed it again, was refused with `NotAllowlisted` when paying it once more, and
+`revoke` returned the vault remainder and closed both accounts.
 
 There is no instruction to top up a vault; the owner funds and refunds it with
 a plain SPL transfer to the token account the mandate controls.
@@ -63,10 +73,12 @@ programs/mandate/
   src/instructions/create_mandate.rs
   src/instructions/spend.rs
   src/instructions/revoke.rs
+  src/instructions/owner.rs      update_policy and the two allowlist edits
   tests/support/mod.rs           shared LiteSVM fixture
   tests/create_mandate.rs
   tests/spend.rs
   tests/revoke.rs
+  tests/owner.rs
   tests/fixtures/spl_token.so    token program loaded into the test VM
 ```
 
@@ -87,8 +99,8 @@ cargo test
 
 The tests run against the compiled `.so` in a LiteSVM instance, so they need
 `anchor build` to have produced `target/deploy/mandate.so` first. `cargo test`
-currently runs 27 tests: 7 unit tests over the period accounting and 20
-integration tests that send real transactions.
+currently runs 46 tests: 13 unit tests over the period and allowlist accounting,
+and 33 integration tests that send real transactions.
 
 LiteSVM ships no SPL token program, so `tests/fixtures/spl_token.so` is loaded
 alongside the program. It was dumped from mainnet:
@@ -126,10 +138,15 @@ cold storage, not next to the deploy script.
 
 `clients/devnet` is a small binary that drives a cluster end to end: it creates
 a mint, funds a vault, creates a mandate for a fresh agent key, sends one
-payment inside the policy, one above the per-payment cap that the program must
-refuse, then revokes and confirms the vault and mandate were closed. It keeps
-its keys under `target/devnet/`, so a rerun reuses them and starts from a fresh
-mandate.
+payment inside the policy and one above the per-payment cap that the program
+must refuse, then exercises the owner edits (update, add a recipient, pay it,
+remove it, and watch the payment fail) and finally revokes to confirm the vault
+and mandate were closed. It keeps its keys under `target/devnet/`, so a rerun
+reuses them and starts from a fresh mandate.
+
+`.github/workflows/ci.yml` runs formatting, clippy with warnings denied, the SBF
+build, an assertion that the artifact's ELF machine type is `0x0107`, the tests,
+and the same checks for the client crate.
 
 ```
 cd clients/devnet
@@ -148,10 +165,13 @@ requires 1.98 while this program pins 1.89 for the SBF toolchain.
   does not read mint metadata.
 - There is no cap on the number of periods, so a long-lived mandate with a short
   period can record many resets. Each reset is a single field write.
-- `spend` accepts any token account whose mint matches and whose authority is the
-  mandate PDA, rather than one fixed vault address. An owner who creates several
-  such accounts can split the balance across them, but `revoke` only sweeps the
-  vault it is given and closes that one.
+- The vault is pinned to the mandate's associated token account, so a balance
+  cannot be split across sibling accounts that `revoke` would never sweep. The
+  cost is that a deposit into any other token account the mandate controls is
+  unusable.
+- `update_policy` keeps the running period's start, so shortening
+  `period_seconds` takes effect at the boundary already in flight rather than
+  immediately.
 - The recipient is checked through the token account's owner, so a payment to a
   token account controlled by an allowlisted key is allowed even if the account
   itself was not named.

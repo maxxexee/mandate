@@ -22,13 +22,25 @@ pub struct Spend<'info> {
         has_one = agent
     )]
     pub mandate: Account<'info, Mandate>,
-    #[account(mut, token::mint = mandate.mint, token::authority = mandate)]
+    #[account(
+        mut,
+        token::mint = mandate.mint,
+        token::authority = mandate,
+        // Pinning the vault to the canonical associated account stops the
+        // balance from being split across sibling accounts that `revoke`
+        // would never sweep.
+        address = anchor_spl::associated_token::get_associated_token_address(
+            &mandate.key(),
+            &mandate.mint,
+        ),
+    )]
     pub vault: Account<'info, TokenAccount>,
     #[account(mut, token::mint = mandate.mint)]
     pub recipient_token: Account<'info, TokenAccount>,
     pub token_program: Program<'info, Token>,
 }
 
+/// Checks the payment against the policy, then moves the tokens.
 pub fn handle_spend(ctx: Context<Spend>, amount: u64) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let recipient = ctx.accounts.recipient_token.owner;

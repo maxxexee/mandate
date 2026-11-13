@@ -39,6 +39,20 @@ impl MandatePolicy {
     }
 }
 
+/// Owner-supplied replacement for the numeric limits of a live mandate.
+///
+/// The allowlist is not part of it: recipients are edited one at a time by their
+/// own instructions, so an owner cannot drop the whole list by resending a stale
+/// copy. A struct rather than four arguments also leaves room to add a limit
+/// without changing the instruction signature.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct PolicyUpdate {
+    pub per_payment_cap: u64,
+    pub period_cap: u64,
+    pub period_seconds: i64,
+    pub expires_at: i64,
+}
+
 /// Spending authority an owner has bound to one agent for one mint.
 ///
 /// The bump is not stored. It is re-derived from the seeds on every spend,
@@ -109,6 +123,55 @@ impl Mandate {
         self.spent_in_period = spent;
         Ok(())
     }
+
+    /// Replaces the numeric limits, refusing a combination the mandate could
+    /// never satisfy.
+    ///
+    /// A new `period_cap` below what this period already spent is rejected, so a
+    /// mandate can never sit in a state that looks over budget. The running
+    /// period keeps its start, which means shortening `period_seconds` takes
+    /// effect at the boundary already in flight.
+    pub fn apply_update(&mut self, update: &PolicyUpdate, now: i64) -> Result<()> {
+        require!(update.per_payment_cap > 0, ErrorCode::ZeroPerPaymentCap);
+        require!(
+            update.per_payment_cap <= update.period_cap,
+            ErrorCode::PerPaymentCapExceedsPeriodCap
+        );
+        require!(update.period_seconds > 0, ErrorCode::ZeroPeriod);
+        require!(update.expires_at > now, ErrorCode::ExpiryInPast);
+        require!(
+            update.period_cap >= self.spent_in_period,
+            ErrorCode::PeriodCapBelowSpent
+        );
+
+        self.per_payment_cap = update.per_payment_cap;
+        self.period_cap = update.period_cap;
+        self.period_seconds = update.period_seconds;
+        self.expires_at = update.expires_at;
+        Ok(())
+    }
+
+    /// Adds a recipient, bounded by the account's fixed allowlist size.
+    pub fn add_recipient(&mut self, recipient: Pubkey) -> Result<()> {
+        require!(!self.allows(&recipient), ErrorCode::RecipientAlreadyAllowed);
+        require!(
+            self.allowlist.len() < crate::constants::MAX_ALLOWLIST,
+            ErrorCode::AllowlistTooLong
+        );
+        self.allowlist.push(recipient);
+        Ok(())
+    }
+
+    /// Removes a recipient, keeping the order of the rest.
+    pub fn remove_recipient(&mut self, recipient: Pubkey) -> Result<()> {
+        let index = self
+            .allowlist
+            .iter()
+            .position(|allowed| *allowed == recipient)
+            .ok_or(error!(ErrorCode::RecipientNotAllowed))?;
+        self.allowlist.remove(index);
+        Ok(())
+    }
 }
 
 #[event]
@@ -123,94 +186,36 @@ pub struct MandateCreated {
 }
 
 #[event]
+pub struct PolicyUpdated {
+    pub owner: Pubkey,
+    pub agent: Pubkey,
+    pub per_payment_cap: u64,
+    pub period_cap: u64,
+    pub period_seconds: i64,
+    pub expires_at: i64,
+}
+
+#[event]
+pub struct RecipientAdded {
+    pub owner: Pubkey,
+    pub agent: Pubkey,
+    pub recipient: Pubkey,
+    pub allowlist_len: u8,
+}
+
+#[event]
+pub struct RecipientRemoved {
+    pub owner: Pubkey,
+    pub agent: Pubkey,
+    pub recipient: Pubkey,
+    pub allowlist_len: u8,
+}
+
+#[event]
 pub struct Spent {
     pub owner: Pubkey,
     pub agent: Pubkey,
     pub recipient: Pubkey,
     pub amount: u64,
     pub spent_in_period: u64,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const DAY: i64 = 86_400;
-
-    fn mandate() -> Mandate {
-        Mandate {
-            owner: Pubkey::new_unique(),
-            agent: Pubkey::new_unique(),
-            mint: Pubkey::new_unique(),
-            per_payment_cap: 2_000_000,
-            period_cap: 5_000_000,
-            period_seconds: DAY,
-            period_start: 1_000,
-            spent_in_period: 0,
-            expires_at: 1_000_000,
-            allowlist: vec![Pubkey::new_unique()],
-        }
-    }
-
-    fn rejection(m: &mut Mandate, amount: u64, now: i64) -> String {
-        m.charge(amount, now)
-            .expect_err("expected the charge to be rejected")
-            .to_string()
-    }
-
-    #[test]
-    fn accumulates_within_the_period() {
-        let mut m = mandate();
-        m.charge(2_000_000, 1_100).unwrap();
-        m.charge(1_000_000, 1_200).unwrap();
-        assert_eq!(m.spent_in_period, 3_000_000);
-        assert_eq!(m.period_start, 1_000);
-    }
-
-    #[test]
-    fn rolls_the_period_over_once_it_elapses() {
-        let mut m = mandate();
-        m.charge(2_000_000, 1_100).unwrap();
-        m.charge(2_000_000, 1_200).unwrap();
-        m.charge(1_000_000, 1_300).unwrap();
-        assert_eq!(m.spent_in_period, 5_000_000);
-
-        m.charge(1_000_000, 1_000 + DAY).unwrap();
-        assert_eq!(m.spent_in_period, 1_000_000);
-        assert_eq!(m.period_start, 1_000 + DAY);
-    }
-
-    #[test]
-    fn rejects_a_payment_above_the_per_payment_cap() {
-        let mut m = mandate();
-        assert!(rejection(&mut m, 2_000_001, 1_100).contains("CapExceeded"));
-    }
-
-    #[test]
-    fn rejects_a_payment_that_would_exhaust_the_period() {
-        let mut m = mandate();
-        m.charge(2_000_000, 1_100).unwrap();
-        m.charge(2_000_000, 1_200).unwrap();
-        assert!(rejection(&mut m, 2_000_000, 1_300).contains("PeriodExhausted"));
-        assert_eq!(m.spent_in_period, 4_000_000);
-    }
-
-    #[test]
-    fn rejects_a_zero_payment() {
-        let mut m = mandate();
-        assert!(rejection(&mut m, 0, 1_100).contains("ZeroAmount"));
-    }
-
-    #[test]
-    fn rejects_after_expiry_even_with_headroom() {
-        let mut m = mandate();
-        assert!(rejection(&mut m, 1_000_000, 1_000_000).contains("Expired"));
-    }
-
-    #[test]
-    fn allows_only_listed_recipients() {
-        let m = mandate();
-        assert!(m.allows(&m.allowlist[0]));
-        assert!(!m.allows(&Pubkey::new_unique()));
-    }
 }

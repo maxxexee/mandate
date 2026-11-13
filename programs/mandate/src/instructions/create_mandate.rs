@@ -24,6 +24,7 @@ pub struct CreateMandate<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Validates `policy` and writes the new mandate account.
 pub fn handle_create_mandate(
     ctx: Context<CreateMandate>,
     agent: Pubkey,

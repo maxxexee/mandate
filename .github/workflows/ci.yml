@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  program:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Solana CLI
+        run: |
+          sh -c "$(curl -sSfL https://release.anza.xyz/stable/install)"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      # Both toolchains come from rust-toolchain.toml files: 1.89 for the
+      # program, 1.100 for the client.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build the program for SBF
+        run: (cd programs/mandate && cargo-build-sbf --sbf-out-dir ../../target/deploy)
+
+      # `anchor build` writes an agent-release artifact into target/sbpfv3-*,
+      # which the loader rejects with "invalid file header". Only this machine
+      # type deploys.
+      - name: Assert the artifact is SBPF
+        run: |
+          machine=$(od -An -tx1 -j18 -N2 target/deploy/mandate.so | tr -d ' \n')
+          echo "ELF machine: $machine"
+          test "$machine" = "0701"
+
+      - name: Test
+        run: cargo test
+
+  client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        working-directory: clients/devnet
+        run: cargo fmt --check
+
+      - name: Lint
+        working-directory: clients/devnet
+        run: cargo clippy -- -D warnings
+
+      - name: Build
+        working-directory: clients/devnet
+        run: cargo build

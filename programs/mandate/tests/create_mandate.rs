@@ -2,7 +2,11 @@
 
 mod support;
 
-use {anchor_lang::{prelude::Pubkey, Space}, mandate::state::Mandate, support::*};
+use {
+    anchor_lang::{prelude::Pubkey, Space},
+    mandate::state::Mandate,
+    support::*,
+};
 
 #[test]
 fn creates_a_mandate_that_matches_the_policy() {

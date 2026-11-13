@@ -100,6 +100,20 @@ fn rejects_after_the_mandate_expires() {
 }
 
 #[test]
+fn rejects_a_vault_that_is_not_the_canonical_token_account() {
+    let (mut f, _, recipient_token) = funded(4_000_000);
+
+    // A second token account the mandate also controls. `revoke` sweeps only the
+    // canonical one, so a payment must never be able to use this as the source.
+    let sibling = Pubkey::new_unique();
+    f.set_token_account(sibling, &f.mandate_address(), 1_000_000);
+
+    let ix = f.spend_ix_with_vault(1_000_000, sibling, recipient_token);
+    f.expect_rejection(&[ix], &[f.agent.insecure_clone()], "ConstraintAddress");
+    assert_eq!(f.token_amount(&sibling), 1_000_000);
+}
+
+#[test]
 fn rejects_a_spend_signed_by_anyone_but_the_agent() {
     let (mut f, _, recipient_token) = funded(4_000_000);
 

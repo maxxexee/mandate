@@ -26,4 +26,10 @@ pub enum ErrorCode {
     NotAllowlisted,
     #[msg("mandate has expired")]
     Expired,
+    #[msg("period_cap cannot be set below what this period already spent")]
+    PeriodCapBelowSpent,
+    #[msg("recipient is already on the allowlist")]
+    RecipientAlreadyAllowed,
+    #[msg("recipient is not on the allowlist")]
+    RecipientNotAllowed,
 }
