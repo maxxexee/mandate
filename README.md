@@ -86,6 +86,40 @@ alongside the program. It was dumped from mainnet:
 solana program dump -u m TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA spl_token.so
 ```
 
+The tests run against the `.so` in `target/deploy`, so they exercise the same
+artifact that gets deployed. If a deploy is rejected with `invalid file header`,
+the artifact is a stale legacy BPF build. Rebuild it and check that the ELF
+machine type is SBPF:
+
+```
+(cd programs/mandate && cargo-build-sbf --sbf-out-dir ../../target/deploy)
+xxd -s 18 -l 2 target/deploy/mandate.so   # expect 0701
+```
+
+## Deploying
+
+```
+solana program deploy target/deploy/mandate.so \
+  --program-id target/deploy/mandate-keypair.json \
+  --url <cluster>
+```
+
+The program keypair in `target/deploy` must stay with the repo's `declare_id`.
+
+`clients/devnet` is a small binary that drives a cluster end to end: it creates
+a mint, funds a vault, creates a mandate for a fresh agent key, sends one
+payment inside the policy and one above the per-payment cap that the program
+must refuse, then reads the result back. It keeps its keys under
+`target/devnet/`, so a rerun spends from the same mandate.
+
+```
+cd clients/devnet
+MANDATE_RPC_URL=https://api.devnet.solana.com cargo run
+```
+
+That crate has its own workspace and pins Rust 1.100, because `solana-rpc-client`
+requires 1.98 while this program pins 1.89 for the SBF toolchain.
+
 ## Known limitations
 
 - The period boundary comes from the `Clock` sysvar. Period accounting is
